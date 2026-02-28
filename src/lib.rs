@@ -1,3 +1,10 @@
+// File: lib.rs - This file is part of AURIA
+// Copyright (c) 2026 AURIA Developers and Contributors
+// Description:
+//     License verification and management for AURIA Runtime Core.
+//     Validates shard access authorization through cryptographic license
+//     verification before shard execution.
+//
 use auria_core::{AuriaError, AuriaResult, License, ShardId};
 
 pub struct LicenseManager {
