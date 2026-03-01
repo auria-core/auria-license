@@ -12,4 +12,4 @@ auria-core = { path = "../auria-core", version = "0.1.0"}
 auria-security = { path = "../auria-security", version = "0.1.0"}
 anyhow = "1.0"
 thiserror = "1.0"
-tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "signal"] }
+tokio = { version = "1.35", features = ["rt-multi-thread", "macros", "time", "signal", "sync"] }
