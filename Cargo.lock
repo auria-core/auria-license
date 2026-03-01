@@ -54,6 +54,8 @@ dependencies = [
  "anyhow",
  "auria-core",
  "auria-security",
+ "serde",
+ "sha3",
  "thiserror",
  "tokio",
 ]
