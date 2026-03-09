@@ -8,11 +8,12 @@
 //
 use auria_core::{AuriaError, AuriaResult, License, PublicKey, ShardId, Signature, Hash};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
+use ed25519_dalek::{Signer, Verifier, PublicKey as EdPublicKey, Signature as EdSignature};
+use auria_security::crypto::{self, PublicKey as AuriaPublicKey, Signature as AuriaSignature};
 
 pub type LicenseMap = HashMap<ShardId, License>;
 
@@ -221,35 +222,44 @@ impl LicenseGenerator {
         }
     }
 
-    pub fn sign_license(license: &mut License, _private_key: &[u8]) {
+    pub fn sign_license(license: &mut License, private_key: &[u8]) -> Result<(), String> {
+        // Parse Ed25519 private key
+        let sk = ed25519_dalek::SecretKey::from_bytes(private_key)
+            .map_err(|_| "Invalid Ed25519 private key")?;
+        let keypair = ed25519_dalek::Keypair::from_secret(sk);
+
+        // Serialize license data to sign
         let mut data = Vec::new();
         data.extend_from_slice(&license.shard_id.0);
         data.extend_from_slice(&license.node_pubkey.0);
         data.extend_from_slice(&license.expiry_timestamp.to_le_bytes());
-        
-        let hash = Keccak256::digest(&data);
-        
-        let mut signature = [0u8; 64];
-        let hash_arr: [u8; 32] = hash.into();
-        signature[..32].copy_from_slice(&hash_arr);
-        signature[32..].copy_from_slice(&hash_arr);
-        license.signature = Signature(signature);
+
+        // Sign with Ed25519
+        let signature = keypair.sign(&data);
+        license.signature = Signature(signature.to_bytes());
+
+        Ok(())
     }
 
-    pub fn verify_signature(license: &License, _public_key: &PublicKey) -> bool {
+    pub fn verify_signature(license: &License, public_key: &PublicKey) -> bool {
+        // Parse Ed25519 public key
+        let pk = EdPublicKey::from_bytes(&public_key.0)
+            .map_err(|_| "Invalid Ed25519 public key")
+            .unwrap();
+
+        // Serialize license data (same as during signing)
         let mut data = Vec::new();
         data.extend_from_slice(&license.shard_id.0);
         data.extend_from_slice(&license.node_pubkey.0);
         data.extend_from_slice(&license.expiry_timestamp.to_le_bytes());
-        
-        let hash = Keccak256::digest(&data);
-        
-        let mut expected_sig = [0u8; 64];
-        let hash_arr: [u8; 32] = hash.into();
-        expected_sig[..32].copy_from_slice(&hash_arr);
-        expected_sig[32..].copy_from_slice(&hash_arr);
-        
-        license.signature.0[..] == expected_sig[..]
+
+        // Parse signature
+        let sig = EdSignature::from_bytes(&license.signature.0)
+            .map_err(|_| "Invalid Ed25519 signature")
+            .unwrap();
+
+        // Verify signature
+        pk.verify(&data, &sig).is_ok()
     }
 }
 
@@ -257,9 +267,28 @@ pub struct LocalLicenseVerifier;
 
 impl LocalLicenseVerifier {
     pub fn verify_license_signature(license: &License, trusted_issuers: &[PublicKey]) -> AuriaResult<bool> {
+        // Check that the signing public key is trusted
         if !trusted_issuers.contains(&license.node_pubkey) {
             return Ok(false);
         }
+
+        // Verify the cryptographic signature
+        let pubkey = AuriaPublicKey(license.node_pubkey);
+        let sig = AuriaSignature(license.signature);
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&license.shard_id.0);
+        data.extend_from_slice(&license.node_pubkey.0);
+        data.extend_from_slice(&license.expiry_timestamp.to_le_bytes());
+
+        let signature_valid = crypto::verify_signature(&pubkey, &data, &sig)
+            .map_err(|e| AuriaError::SecurityError(e.to_string()))?;
+
+        if !signature_valid {
+            return Ok(false);
+        }
+
+        // Check expiry
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -267,6 +296,7 @@ impl LocalLicenseVerifier {
         if license.expiry_timestamp < now {
             return Ok(false);
         }
+
         Ok(true)
     }
 }
@@ -378,13 +408,30 @@ mod tests {
 
     #[test]
     fn test_local_license_verifier() {
-        let license = License {
-            shard_id: ShardId([0u8; 32]),
-            node_pubkey: PublicKey([1u8; 32]),
+        use rand::rngs::OsRng;
+
+        // Generate Ed25519 keypair for the issuer
+        let keypair = ed25519_dalek::Keypair::generate(&mut OsRng);
+
+        // Convert to our types
+        let shard_id = ShardId([0u8; 32]);
+        let node_pubkey = PublicKey(keypair.public.as_bytes().try_into().unwrap());
+
+        // Create a license with data to be signed
+        let mut license = License {
+            shard_id,
+            node_pubkey: node_pubkey,
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
         };
-        let trusted = vec![PublicKey([1u8; 32])];
+
+        // Sign the license data using the private key
+        let private_key_bytes = keypair.secret.as_bytes();
+        LicenseGenerator::sign_license(&mut license, private_key_bytes).unwrap();
+
+        // Trusted issuers includes the node's public key
+        let trusted = vec![node_pubkey];
+
         assert!(LocalLicenseVerifier::verify_license_signature(&license, &trusted).unwrap());
     }
 
@@ -558,14 +605,26 @@ mod tests {
 
     #[test]
     fn test_local_license_verifier_expired() {
-        let license = License {
+        use rand::rngs::OsRng;
+
+        // Generate keypair for the issuer
+        let keypair = ed25519_dalek::Keypair::generate(&mut OsRng);
+        let node_pubkey = PublicKey(keypair.public.as_bytes().try_into().unwrap());
+
+        // Create an expired license
+        let mut license = License {
             shard_id: ShardId([0u8; 32]),
-            node_pubkey: PublicKey([1u8; 32]),
-            expiry_timestamp: 1,
+            node_pubkey: node_pubkey,
+            expiry_timestamp: 1, // expired
             signature: Signature([0u8; 64]),
         };
-        let trusted = vec![PublicKey([1u8; 32])];
-        
+
+        // Sign with valid signature
+        let private_key_bytes = keypair.secret.as_bytes();
+        LicenseGenerator::sign_license(&mut license, private_key_bytes).unwrap();
+
+        let trusted = vec![node_pubkey];
+
         assert!(!LocalLicenseVerifier::verify_license_signature(&license, &trusted).unwrap());
     }
 
