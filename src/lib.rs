@@ -96,12 +96,12 @@ impl RateLimiter {
             .unwrap()
             .as_millis() as u64;
         
-        if self.last_update_ms == 0 {
-            self.last_update_ms = now_ms;
-            return self.tokens >= 1.0;
-        }
+        let elapsed_sec = if self.last_update_ms == 0 {
+            0.0
+        } else {
+            (now_ms - self.last_update_ms) as f64 / 1000.0
+        };
         
-        let elapsed_sec = (now_ms - self.last_update_ms) as f64 / 1000.0;
         self.tokens = (self.tokens + elapsed_sec * self.requests_per_second as f64)
             .min(self.burst_size as f64);
         self.last_update_ms = now_ms;
@@ -372,8 +372,8 @@ mod tests {
         let node_pubkey = PublicKey([1u8; 32]);
 
         let license = License {
-            shard_id,
-            node_pubkey,
+            shard_id: shard_id.clone(),
+            node_pubkey: node_pubkey.clone(),
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
         };
@@ -389,8 +389,8 @@ mod tests {
         let node_pubkey = PublicKey([2u8; 32]);
         
         let license = LicenseGenerator::generate_license(
-            shard_id,
-            node_pubkey,
+            shard_id.clone(),
+            node_pubkey.clone(),
             u64::MAX,
         );
         
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_rate_limiter() {
-        let mut limiter = RateLimiter::new(10, 5);
+        let mut limiter = RateLimiter::new(0, 5);
         
         for _ in 0..5 {
             assert!(limiter.try_acquire());
@@ -419,7 +419,7 @@ mod tests {
         
         let shard_id = ShardId([1u8; 32]);
         let license = License {
-            shard_id,
+            shard_id: shard_id.clone(),
             node_pubkey: PublicKey([1u8; 32]),
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
@@ -437,8 +437,8 @@ mod tests {
         let shard_id = ShardId([1u8; 32]);
         let node_pubkey = PublicKey([2u8; 32]);
         
-        tracker.record_usage(shard_id, node_pubkey, 100).await;
-        tracker.record_usage(shard_id, node_pubkey, 50).await;
+        tracker.record_usage(shard_id.clone(), node_pubkey.clone(), 100).await;
+        tracker.record_usage(shard_id.clone(), node_pubkey, 50).await;
         
         let usage = tracker.get_usage(shard_id).await.unwrap();
         
@@ -495,14 +495,14 @@ mod tests {
         let shard2 = ShardId([2u8; 32]);
         
         let license1 = License {
-            shard_id: shard1,
+            shard_id: shard1.clone(),
             node_pubkey: PublicKey([1u8; 32]),
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
         };
         
         let license2 = License {
-            shard_id: shard2,
+            shard_id: shard2.clone(),
             node_pubkey: PublicKey([1u8; 32]),
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
@@ -525,7 +525,7 @@ mod tests {
         let shard3 = ShardId([3u8; 32]);
         
         let license = License {
-            shard_id: shard1,
+            shard_id: shard1.clone(),
             node_pubkey: PublicKey([1u8; 32]),
             expiry_timestamp: u64::MAX,
             signature: Signature([0u8; 64]),
@@ -557,7 +557,7 @@ mod tests {
 
         let license = License {
             shard_id: ShardId([0u8; 32]),
-            node_pubkey,
+            node_pubkey: node_pubkey.clone(),
             expiry_timestamp: 1,
             signature: Signature([0u8; 64]),
         };
@@ -574,11 +574,11 @@ mod tests {
         let shard_id = ShardId([1u8; 32]);
         let node_pubkey = PublicKey([2u8; 32]);
         
-        tracker.record_usage(shard_id, node_pubkey, 100).await;
+        tracker.record_usage(shard_id.clone(), node_pubkey, 100).await;
         
-        assert!(tracker.get_usage(shard_id).await.is_some());
+        assert!(tracker.get_usage(shard_id.clone()).await.is_some());
         
-        tracker.reset_usage(shard_id).await;
+        tracker.reset_usage(shard_id.clone()).await;
         
         assert!(tracker.get_usage(shard_id).await.is_none());
     }
