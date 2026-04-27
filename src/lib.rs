@@ -69,7 +69,6 @@ pub struct RateLimit {
 #[derive(Clone)]
 pub struct LicenseManager {
     licenses: Arc<AsyncRwLock<LicenseMap>>,
-    config: LicenseConfig,
     rate_limiters: Arc<AsyncRwLock<HashMap<PublicKey, RateLimiter>>>,
 }
 
@@ -116,10 +115,9 @@ impl RateLimiter {
 }
 
 impl LicenseManager {
-    pub fn new(config: LicenseConfig) -> Self {
+    pub fn new(_config: LicenseConfig) -> Self {
         Self {
             licenses: Arc::new(AsyncRwLock::new(HashMap::new())),
-            config,
             rate_limiters: Arc::new(AsyncRwLock::new(HashMap::new())),
         }
     }
@@ -263,14 +261,12 @@ impl LocalLicenseVerifier {
 
 #[derive(Clone)]
 pub struct BlockchainLicenseClient {
-    registry_address: String,
     cache: Arc<AsyncRwLock<HashMap<ShardId, Option<License>>>>,
 }
 
 impl BlockchainLicenseClient {
-    pub fn new(registry_address: String) -> Self {
+    pub fn new(_registry_address: String) -> Self {
         Self {
-            registry_address,
             cache: Arc::new(AsyncRwLock::new(HashMap::new())),
         }
     }
